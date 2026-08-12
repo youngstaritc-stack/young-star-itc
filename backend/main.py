@@ -1,17 +1,18 @@
 import sys
 import os
 import asyncio
+import json
+import websockets
 import pandas as pd
 from sqlite3 import connect
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-# Add parent directory to path to import ai_engine and database
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from ai_engine.indicators import TechnicalAnalysis
 from database.models import init_db
 
-app = FastAPI(title="Young Star ITC Trade Engine")
+app = FastAPI(title="Young Star ITC Binance Live Engine")
 
 app.add_middleware(
     CORSMiddleware,
@@ -21,11 +22,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize Database on start
 init_db()
 
+# Global candle price memory for BTC/USDT
+btc_prices = []
+
 def save_signal_to_db(data: dict):
-    """Helper function to save signals into SQLite database"""
     conn = connect('trade_data.db')
     cursor = conn.cursor()
     cursor.execute('''
@@ -37,61 +39,46 @@ def save_signal_to_db(data: dict):
 
 @app.get("/")
 def read_root():
-    return {"status": "Active", "message": "Young Star ITC Trading Backend Running"}
-
-@app.get("/api/signals/history")
-def get_signal_history(limit: int = 20):
-    """REST API endpoint to fetch recent signals history from database"""
-    conn = connect('trade_data.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-        SELECT timestamp, price, rsi, ema_20, ema_50, signal, reason 
-        FROM signals 
-        ORDER BY id DESC 
-        LIMIT ?
-    ''', (limit,))
-    rows = cursor.fetchall()
-    conn.close()
-    
-    history = []
-    for row in rows:
-        history.append({
-            "timestamp": row[0],
-            "price": row[1],
-            "rsi": row[2],
-            "ema_20": row[3],
-            "ema_50": row[4],
-            "signal": row[5],
-            "reason": row[6]
-        })
-    return {"status": "success", "data": history}
+    return {"status": "Active", "message": "Binance Live Stream Engine Running"}
 
 @app.websocket("/ws/signals")
 async def websocket_signals(websocket: WebSocket):
     await websocket.accept()
     
-    base_price = 100.0
-    prices = [base_price + (i * 0.2 if i % 2 == 0 else -i * 0.1) for i in range(60)]
+    # Connect directly to Binance Public WebSocket Stream for BTC/USDT 1m kline
+    binance_ws_url = "wss://stream.binance.com:9443/ws/btcusdt@kline_1m"
     
     try:
-        while True:
-            import random
-            price_change = random.uniform(-0.8, 1.0)
-            prices.append(prices[-1] + price_change)
-            
-            df = pd.DataFrame({"close": prices})
-            analysis_result = TechnicalAnalysis.generate_signal(df)
-            
-            # Save generated signal to database
-            save_signal_to_db(analysis_result)
-            
-            # Broadcast signal via websocket
-            await websocket.send_json({
-                "type": "SIGNAL_UPDATE",
-                "data": analysis_result
-            })
-            
-            await asyncio.sleep(2)
-            
+        async with websockets.connect(binance_ws_url) as b_ws:
+            while True:
+                response = await b_ws.recv()
+                data = json.loads(response)
+                kline = data.get('k', {})
+                close_price = float(kline.get('c', 0))
+
+                if close_price > 0:
+                    btc_prices.append(close_price)
+                    if len(btc_prices) > 100:
+                        btc_prices.pop(0)
+
+                    # Minimum 50 price points required for EMA50 calculation
+                    if len(btc_prices) >= 50:
+                        df = pd.DataFrame({"close": btc_prices})
+                        analysis_result = TechnicalAnalysis.generate_signal(df)
+                        save_signal_to_db(analysis_result)
+
+                        await websocket.send_json({
+                            "type": "SIGNAL_UPDATE",
+                            "symbol": "BTCUSDT",
+                            "data": analysis_result
+                        })
+                    else:
+                        await websocket.send_json({
+                            "type": "BUFFERING",
+                            "message": f"Collecting market data... ({len(btc_prices)}/50)"
+                        })
+
     except WebSocketDisconnect:
-        print("Client disconnected from websocket")
+        print("Client disconnected")
+    except Exception as e:
+        print(f"Binance Stream Error: {e}")
