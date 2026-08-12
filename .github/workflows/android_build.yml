@@ -20,13 +20,13 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '22'
+        node-version: '20'
 
     - name: Install Dependencies
       run: |
         cd mobile_app
         npm install
-        npx cap copy
+        npx cap sync android
 
     - name: Make Gradlew Executable
       run: chmod +x mobile_app/android/gradlew
