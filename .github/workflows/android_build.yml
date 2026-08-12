@@ -26,7 +26,11 @@ jobs:
       run: |
         cd mobile_app
         npm install
-        npx cap sync android
+
+    - name: Sync Capacitor
+      run: |
+        cd mobile_app
+        npx cap copy android
 
     - name: Make Gradlew Executable
       run: chmod +x mobile_app/android/gradlew
