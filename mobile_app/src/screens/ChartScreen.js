@@ -1,120 +1,42 @@
 import React, { useState, useEffect } from 'react';
 
-// YOUNG STAR ITC — Advanced Interactive Chart Module
-const ChartScreen = () => {
-  const [selectedSymbol, setSelectedSymbol] = useState('Gold');
-  const [selectedTimeframe, setSelectedTimeframe] = useState('15M');
-  const [candles, setCandles] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  const symbols = ['Gold', 'Silver', 'AUD/USD'];
-  const timeframes = ['1D', '4H', '2H', '1H', '45M', '30M', '15M', '5M', '1M'];
+export default function ChartScreen() {
+  const [data, setData] = useState({ symbol: 'XAU/USD', price: 0, volume: 0, ai_signal: 'WAIT' });
 
   useEffect(() => {
-    fetchChartData();
-  }, [selectedSymbol, selectedTimeframe]);
-
-  const fetchChartData = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`http://127.0.0.1:8000/api/chart/data?symbol=${selectedSymbol}&timeframe=${selectedTimeframe}`);
-      const data = await res.json();
-      setCandles(data.candles || []);
-    } catch (err) {
-      console.error("Chart API Fetch Error:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
+    const ws = new WebSocket('wss://miniature-tribble-xr9qxv7xrv5gfvgv6-8000.app.github.dev/ws/stream');
+    ws.onmessage = (event) => {
+      try {
+        const parsed = JSON.parse(event.data);
+        setData(parsed);
+      } catch (err) {
+        console.error('WebSocket Error:', err);
+      }
+    };
+    return () => ws.close();
+  }, []);
 
   return (
-    <div style={{ backgroundColor: '#070B14', color: '#FFFFFF', minHeight: '100vh', padding: '16px', fontFamily: 'sans-serif' }}>
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-        <div>
-          <h2 style={{ margin: 0, fontSize: '18px', color: '#FFF' }}>{selectedSymbol} CHART</h2>
-          <span style={{ fontSize: '11px', color: '#787B86' }}>YOUNG STAR VOLUME ENGINE OVERLAY</span>
+    <div style={{ backgroundColor: '#0b0e14', color: '#fff', minHeight: '100vh', padding: '20px', fontFamily: 'sans-serif' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+        <h3 style={{ margin: 0, color: '#38bdf8' }}>Young Star ITC Chart</h3>
+        <span style={{ backgroundColor: '#1e293b', padding: '6px 12px', borderRadius: '6px', fontSize: '12px' }}>LIVE</span>
+      </div>
+
+      <div style={{ backgroundColor: '#131b26', padding: '16px', borderRadius: '12px', marginBottom: '20px' }}>
+        <div style={{ fontSize: '14px', color: '#94a3b8' }}>{data.symbol || 'XAU/USD'}</div>
+        <div style={{ fontSize: '28px', fontWeight: 'bold', color: '#34d399', margin: '8px 0' }}>
+          ${data.price ? data.price.toFixed(2) : '0.00'}
         </div>
+        <div style={{ fontSize: '12px', color: '#cbd5e1' }}>Volume: {data.volume || 0}</div>
       </div>
 
-      {/* Symbol Selector */}
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
-        {symbols.map(s => (
-          <button
-            key={s}
-            onClick={() => setSelectedSymbol(s)}
-            style={{
-              padding: '6px 12px',
-              borderRadius: '6px',
-              border: 'none',
-              backgroundColor: selectedSymbol === s ? '#2962FF' : '#131722',
-              color: '#FFF',
-              fontWeight: 'bold',
-              cursor: 'pointer',
-              fontSize: '12px'
-            }}
-          >
-            {s}
-          </button>
-        ))}
-      </div>
-
-      {/* Timeframe Selector Bar */}
-      <div style={{ display: 'flex', gap: '4px', marginBottom: '16px', overflowX: 'auto', paddingBottom: '4px' }}>
-        {timeframes.map(tf => (
-          <button
-            key={tf}
-            onClick={() => setSelectedTimeframe(tf)}
-            style={{
-              padding: '4px 8px',
-              borderRadius: '4px',
-              border: '1px solid #2A2E39',
-              backgroundColor: selectedTimeframe === tf ? '#1E222D' : 'transparent',
-              color: selectedTimeframe === tf ? '#2962FF' : '#B2B5BE',
-              fontSize: '11px',
-              cursor: 'pointer'
-            }}
-          >
-            {tf}
-          </button>
-        ))}
-      </div>
-
-      {/* Main Candlestick & Volume Canvas Display Area */}
-      <div style={{ backgroundColor: '#131722', borderRadius: '12px', padding: '16px', border: '1px solid #2A2E39', marginBottom: '16px', minHeight: '320px' }}>
-        {loading ? (
-          <div style={{ color: '#787B86', textAlign: 'center', marginTop: '120px' }}>Loading Candlestick Data...</div>
-        ) : (
-          <div>
-            <div style={{ fontSize: '12px', color: '#787B86', marginBottom: '12px', display: 'flex', justifyContent: 'space-between' }}>
-              <span>OHLC & VOLUME STREAM ({selectedTimeframe})</span>
-              <span style={{ color: '#00E676' }}>● LIVE</span>
-            </div>
-
-            {/* Candlestick Visualization */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {candles.map((candle, idx) => {
-                const isBull = candle.close >= candle.open;
-                const color = isBull ? '#00E676' : '#FF5252';
-                return (
-                  <div key={idx} style={{ backgroundColor: '#070B14', padding: '10px', borderRadius: '6px', borderLeft: `4px solid ${color}` }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: 'bold' }}>
-                      <span>{candle.time}</span>
-                      <span style={{ color }}>Close: {candle.close}</span>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#787B86', marginTop: '4px' }}>
-                      <span>O: {candle.open} | H: {candle.high} | L: {candle.low}</span>
-                      <span style={{ color: '#2962FF' }}>Vol: {candle.volume}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
+      <div style={{ backgroundColor: '#131b26', padding: '16px', borderRadius: '12px', borderLeft: '4px solid #0284c7' }}>
+        <div style={{ fontSize: '12px', color: '#94a3b8' }}>AI Engine State</div>
+        <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#38bdf8', marginTop: '4px' }}>
+          Signal: {data.ai_signal || 'NEUTRAL'}
+        </div>
       </div>
     </div>
   );
-};
-
-export default ChartScreen;
+}
