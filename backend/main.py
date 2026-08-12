@@ -1,13 +1,8 @@
-import sys
-import os
-import asyncio
-import json
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body
+from fastapi import FastAPI, WebSocket
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
-from ai_engine.volume_engine import VolumeEngine
-from backend.auth import AuthManager
 
-app = FastAPI(title="Young Star ITC API")
+app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
@@ -17,50 +12,77 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-engine = VolumeEngine()
-auth_mgr = AuthManager()
-
-@app.get("/")
+@app.get("/", response_class=HTMLResponse)
 def read_root():
-    return {"status": "ONLINE", "system": "YOUNG STAR ITC Core API"}
+    return """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Young Star ITC</title>
+        <style>
+            body { background-color: #0b0e14; color: #fff; font-family: sans-serif; margin: 0; padding: 20px; }
+            .card { background: #131b26; border-radius: 12px; padding: 20px; margin-bottom: 15px; border: 1px solid #1e293b; }
+            input { width: 100%; padding: 12px; margin: 8px 0; border-radius: 8px; border: 1px solid #1e293b; background: #1e293b; color: #fff; box-sizing: border-box; }
+            button { width: 100%; padding: 12px; border-radius: 8px; border: none; background: #0284c7; color: #fff; font-weight: bold; cursor: pointer; margin-top: 10px; }
+            .badge { background: #1e293b; padding: 4px 8px; border-radius: 6px; font-size: 12px; color: #38bdf8; }
+        </style>
+    </head>
+    <body>
+        <div id="login-view" class="card">
+            <h2 style="color: #38bdf8; margin-top:0;">Young Star ITC Login</h2>
+            <input type="email" id="email" placeholder="Email" value="admin@youngstar.itc">
+            <input type="password" id="password" placeholder="Password" value="123456">
+            <button onclick="login()">Login to Dashboard</button>
+        </div>
 
-@app.post("/api/auth/login")
-def login(payload: dict = Body(...)):
-    email = payload.get("email", "")
-    password = payload.get("password", "")
-    result = auth_mgr.authenticate(email, password)
-    if result.get("status") == "FAILED":
-        raise HTTPException(status_code=401, detail=result.get("message"))
-    return result
+        <div id="chart-view" class="card" style="display:none;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <h3 style="color:#38bdf8; margin:0;">XAU/USD Live Chart</h3>
+                <span class="badge">WebSocket Connected</span>
+            </div>
+            <h1 id="price" style="color:#34d399; font-size: 36px; margin: 15px 0;">$0.00</h1>
+            <p id="volume" style="color:#cbd5e1; margin:0;">Volume: 0</p>
+            <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #1e293b;">
+                <span style="color:#94a3b8;">AI Signal: </span>
+                <strong id="signal" style="color:#38bdf8;">WAITing...</strong>
+            </div>
+        </div>
 
-@app.get("/api/chart/data")
-def get_chart_data(symbol: str = "Gold", timeframe: str = "15M"):
-    return {
-        "symbol": symbol,
-        "timeframe": timeframe,
-        "candles": [
-            {"time": "10:00", "open": 2400.0, "high": 2405.0, "low": 2398.0, "close": 2402.5, "volume": 1200},
-            {"time": "10:15", "open": 2402.5, "high": 2410.0, "low": 2401.0, "close": 2408.4, "volume": 1850}
-        ]
-    }
+        <script>
+            function login() {
+                document.getElementById('login-view').style.display = 'none';
+                document.getElementById('chart-view').style.display = 'block';
+                connectWS();
+            }
 
-@app.get("/api/analysis/state")
-def get_analysis_state(symbol: str = "Gold", timeframe: str = "15M"):
-    return engine.analyze_volume_and_pattern(symbol, timeframe)
+            function connectWS() {
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const ws = new WebSocket(`${protocol}//${window.location.host}/ws/stream`);
+                ws.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if(data.price) document.getElementById('price').innerText = `$${data.price.toFixed(2)}`;
+                    if(data.volume) document.getElementById('volume').innerText = `Volume: ${data.volume}`;
+                    if(data.ai_signal) document.getElementById('signal').innerText = data.ai_signal;
+                };
+            }
+        </script>
+    </body>
+    </html>
+    """
 
 @app.websocket("/ws/stream")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    try:
-        while True:
-            live_data = {
-                "event": "TICK_UPDATE",
-                "symbol": "Gold",
-                "price": 2409.20,
-                "volume": 1920,
-                "status": "LIVE"
-            }
-            await websocket.send_text(json.dumps(live_data))
-            await asyncio.sleep(3)
-    except WebSocketDisconnect:
-        print("WebSocket Client Disconnected")
+    import asyncio, random
+    price = 2350.00
+    while True:
+        price += random.uniform(-0.5, 0.5)
+        await websocket.send_json({
+            "symbol": "XAU/USD",
+            "price": price,
+            "volume": random.randint(100, 500),
+            "ai_signal": random.choice(["BUY CONFIRMED", "SELL CONFIRMED", "WAIT"])
+        })
+        await asyncio.sleep(1)
