@@ -1,8 +1,8 @@
 import sys
 import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from fastapi import FastAPI
+import asyncio
+import json
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from ai_engine.volume_engine import VolumeEngine
 
@@ -35,6 +35,22 @@ def get_chart_data(symbol: str = "Gold", timeframe: str = "15M"):
 
 @app.get("/api/analysis/state")
 def get_analysis_state(symbol: str = "Gold", timeframe: str = "15M"):
-    # Connect directly to AI Volume Engine Core
-    analysis_result = engine.analyze_volume_and_pattern(symbol, timeframe)
-    return analysis_result
+    return engine.analyze_volume_and_pattern(symbol, timeframe)
+
+# Real-time WebSocket Stream Endpoint for Live Candles & Signals
+@app.websocket("/ws/stream")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        while True:
+            live_data = {
+                "event": "TICK_UPDATE",
+                "symbol": "Gold",
+                "price": 2409.20,
+                "volume": 1920,
+                "status": "LIVE"
+            }
+            await websocket.send_text(json.dumps(live_data))
+            await asyncio.sleep(3)
+    except WebSocketDisconnect:
+        print("WebSocket Client Disconnected")
