@@ -5,7 +5,7 @@ from .trend_engine import TrendEngine
 
 
 class ChannelEngine:
-    """Part 5: Parallel Channel using candle body boundaries."""
+    """Part 5: Parallel Channel using confirmed swing boundaries."""
 
     PARALLEL_SLOPE_TOLERANCE = 0.05
 
@@ -15,6 +15,7 @@ class ChannelEngine:
         direction = trend_context.get("direction", "SIDEWAYS")
         if len(highs) < 2 or len(lows) < 2:
             return self._empty(timeframe, direction)
+
         h1, h2 = highs[-2], highs[-1]
         l1, l2 = lows[-2], lows[-1]
         hs = (h2["price"] - h1["price"]) / (h2["index"] - h1["index"])
@@ -23,16 +24,26 @@ class ChannelEngine:
             hs = ls = 0.0
         elif abs(hs - ls) > self.PARALLEL_SLOPE_TOLERANCE:
             return self._empty(timeframe, direction)
+
         upper = (h1["index"], h1["price"], hs)
         lower = (l1["index"], l1["price"], ls)
         state = self._state(visible, upper, lower)
-        invalid = self._shadow_break(visible, upper, lower)
-        if invalid:
+        if self._body_break(visible, upper, lower):
             state = "INVALIDATED"
-        return {"timeframe": timeframe, "direction": direction, "upper_boundary": upper, "lower_boundary": lower, "slope": hs, "upper_touches": 2, "lower_touches": 2, "state": state}
+
+        return {
+            "timeframe": timeframe,
+            "direction": direction,
+            "upper_boundary": upper,
+            "lower_boundary": lower,
+            "slope": hs,
+            "upper_touches": 2,
+            "lower_touches": 2,
+            "state": state,
+        }
 
     @staticmethod
-    def _state(candles, upper, lower):
+    def _state(candles: List[CandleData], upper, lower) -> str:
         hits = 0
         u_i, u_p, u_s = upper
         l_i, l_p, l_s = lower
@@ -44,16 +55,28 @@ class ChannelEngine:
         return "RETESTED" if hits > 1 else ("TOUCHED" if hits else "VIRGIN")
 
     @staticmethod
-    def _shadow_break(candles, upper, lower):
+    def _body_break(candles: List[CandleData], upper, lower) -> bool:
         u_i, u_p, u_s = upper
         l_i, l_p, l_s = lower
         for i in range(max(u_i, l_i), len(candles)):
+            c = candles[i]
             up = u_p + u_s * (i - u_i)
             lp = l_p + l_s * (i - l_i)
-            if candles[i].high > up or candles[i].low < lp:
+            body_high = max(c.open, c.close)
+            body_low = min(c.open, c.close)
+            if body_high > up or body_low < lp:
                 return True
         return False
 
     @staticmethod
     def _empty(timeframe, direction):
-        return {"timeframe": timeframe, "direction": direction, "upper_boundary": None, "lower_boundary": None, "slope": 0.0, "upper_touches": 0, "lower_touches": 0, "state": "INVALIDATED" if direction != "SIDEWAYS" else "VIRGIN"}
+        return {
+            "timeframe": timeframe,
+            "direction": direction,
+            "upper_boundary": None,
+            "lower_boundary": None,
+            "slope": 0.0,
+            "upper_touches": 0,
+            "lower_touches": 0,
+            "state": "INVALIDATED" if direction != "SIDEWAYS" else "VIRGIN",
+        }
