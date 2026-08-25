@@ -1,21 +1,35 @@
-from fastapi import FastAPI, HTTPException
+from typing import List, Optional
+
+from fastapi import FastAPI
 from pydantic import BaseModel
-from backend.mt5_bridge import process_incoming_mt5_data
-from ai_engine.master_engine import CoreBrain
 
-app = FastAPI(title="Young Star ITC - MT5 Pro Engine")
-brain = CoreBrain()
+from ai_engine import AnalysisPipeline, CandleData
 
-class MT5Data(BaseModel):
-    symbol: str
-    price: float
+app = FastAPI(title="Young Star ITC — Rule Book Analysis Engine")
+pipeline = AnalysisPipeline()
+
+
+class CandleInput(BaseModel):
+    timestamp: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float = 0.0
+
+
+class AnalysisRequest(BaseModel):
+    candles: List[CandleInput]
     timeframe: str
+    current_index: Optional[int] = None
+
 
 @app.get("/")
 def read_root():
-    return {"status": "Forex Engine Active", "mode": "MT5 Ready"}
+    return {"status": "active", "engine": "rule_book_analysis", "parts": "1-7"}
 
-@app.post("/api/mt5-data")
-def receive_data(data: MT5Data):
-    result = process_incoming_mt5_data(data.dict())
-    return {"message": "Data received", "engine_output": brain.run_analysis(data)}
+
+@app.post("/api/analyze")
+def analyze(request: AnalysisRequest):
+    candles = [CandleData(**c.model_dump()) for c in request.candles]
+    return pipeline.analyze(candles, request.timeframe, request.current_index)
