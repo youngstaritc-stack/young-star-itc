@@ -40,14 +40,14 @@ class OrderBlockEngine:
             body_low, body_high = sorted((base.open, base.close))
 
             if base.close < base.open and next_c.close > prior.high:
-                obs.append(self._zone(body_low, body_high, "BULLISH", i, visible, trend, timeframe))
+                obs.append(self._zone(body_low, body_high, "BULLISH", i, visible, timeframe))
             elif base.close > base.open and next_c.close < prior.low:
-                obs.append(self._zone(body_low, body_high, "BEARISH", i, visible, trend, timeframe))
+                obs.append(self._zone(body_low, body_high, "BEARISH", i, visible, timeframe))
 
         return self._rank(obs, trend)
 
     @staticmethod
-    def _zone(low: float, high: float, direction: str, formation: int, candles: List[CandleData], trend: str, timeframe: str) -> OBZone:
+    def _zone(low: float, high: float, direction: str, formation: int, candles: List[CandleData], timeframe: str) -> OBZone:
         state = "VIRGIN"
         hits = 0
         for c in candles[formation + 1:]:
@@ -77,14 +77,14 @@ class OrderBlockEngine:
 
     @staticmethod
     def _rank(obs: List[OBZone], trend: str) -> List[OBZone]:
-        # Rule priority: trend-aligned first, then nearest valid zone, then recent.
+        # Rule priority: trend-aligned first, valid before invalidated,
+        # nearest valid zone first, then most recent formation.
         return sorted(
             obs,
             key=lambda x: (
-                x.direction == trend,
-                x.state != "INVALIDATED",
-                -x.distance,
-                x.age,
+                x.direction != trend,
+                x.state == "INVALIDATED",
+                x.distance,
+                -x.age,
             ),
-            reverse=True,
         )
