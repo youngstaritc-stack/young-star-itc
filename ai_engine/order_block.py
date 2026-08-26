@@ -23,7 +23,7 @@ class OBZone:
 
 
 class OrderBlockEngine:
-    """Part 4: Rule Book OB detection/state/priority only."""
+    """Part 4: Rule Book order-block detection, state and priority only."""
 
     STATES = ("VIRGIN", "TOUCHED", "RETESTED", "INVALIDATED")
 
@@ -39,8 +39,8 @@ class OrderBlockEngine:
             return c.close > c.open and nxt.close < c.low
         return False
 
-    @staticmethod
-    def _state(candles: list[CandleData], start: int, low: float, high: float, direction: str) -> str:
+    @classmethod
+    def _state(cls, candles: list[CandleData], start: int, low: float, high: float, direction: str) -> str:
         touches = 0
         for c in candles[start + 1:]:
             if direction == "BULLISH" and c.close < low:
@@ -53,39 +53,54 @@ class OrderBlockEngine:
                     return "RETESTED"
         return "TOUCHED" if touches == 1 else "VIRGIN"
 
-    def detect(self, candles: list[CandleData], current_index: int, trend_context: dict[str, Any], timeframe: str) -> dict[str, Any]:
+    @staticmethod
+    def _is_high_quality(direction: str, trend_context: dict[str, Any]) -> bool:
+        return trend_context.get("direction") == direction
+
+    def detect(
+        self,
+        candles: list[CandleData],
+        current_index: int,
+        trend_context: dict[str, Any],
+        timeframe: str,
+    ) -> list[OBZone]:
         if not candles or current_index < 0:
-            return {"timeframe": timeframe, "zones": [], "priority": None}
+            return []
         end = min(current_index, len(candles) - 1)
         visible = candles[: end + 1]
         trend = trend_context.get("direction", "SIDEWAYS")
         if trend not in {"BULLISH", "BEARISH"}:
-            return {"timeframe": timeframe, "zones": [], "priority": None}
+            return []
 
-        zones: list[OBZone] = []
         last_index = len(visible) - 1
+        current_price = visible[-1].close
+        zones: list[tuple[OBZone, bool]] = []
+
         for i in range(len(visible) - 1):
             if not self._is_formation(visible, i, trend):
                 continue
-            c = visible[i]
-            low = min(c.open, c.close)
-            high = max(c.open, c.close)
+            candle = visible[i]
+            low = min(candle.open, candle.close)
+            high = max(candle.open, candle.close)
             state = self._state(visible, i, low, high, trend)
-            zones.append(OBZone(
+            distance = abs(current_price - ((low + high) / 2.0))
+            zone = OBZone(
                 zone_low=low,
                 zone_high=high,
                 direction=trend,
                 state=state,
                 formation_index=i,
                 last_processed_index=last_index,
-                distance=0.0,
+                distance=distance,
                 age=last_index - i,
                 ob_id=f"{timeframe}:{trend}:{i}",
-            ))
+            )
+            zones.append((zone, self._is_high_quality(trend, trend_context)))
 
-        zones.sort(key=lambda z: (z.state != "INVALIDATED", z.age * -1), reverse=True)
-        return {
-            "timeframe": timeframe,
-            "zones": [z.to_dict() for z in zones],
-            "priority": zones[0].to_dict() if zones else None,
-        }
+        zones.sort(key=lambda item: (
+            item[0].state == "INVALIDATED",
+            not item[1],
+            item[0].distance,
+            -item[0].formation_index,
+        ))
+        return [zone for zone, _ in zones]
