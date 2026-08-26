@@ -4,7 +4,7 @@ from .candle import CandleData
 
 
 class TrendEngine:
-    """Part 1: five-candle market-structure analysis only."""
+    """Part 1: five-candle pivot and market-structure analysis only."""
 
     @staticmethod
     def _detect_swings(candles: list[CandleData]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -34,16 +34,23 @@ class TrendEngine:
 
     def detect_market_structure(self, candles: list[CandleData], current_index: int) -> dict[str, Any]:
         if not candles or current_index < 0:
-            return {"direction": "SIDEWAYS", "confidence": 0, "structure": "UNCONFIRMED", "swing_highs": [], "swing_lows": [], "trend_change_detected": False, "trend_start_confirmed": False, "is_sideways": True}
+            return {
+                "direction": "SIDEWAYS", "confidence": 0, "structure": "UNCONFIRMED",
+                "swing_highs": [], "swing_lows": [], "trend_change_detected": False,
+                "trend_start_confirmed": False, "is_sideways": True,
+            }
+
         end = min(current_index, len(candles) - 1)
         visible = candles[: end + 1]
         highs, lows = self._detect_swings(visible)
         direction, structure = self._analyze_structure(highs, lows)
+
         previous_direction = "SIDEWAYS"
         if len(highs) >= 3 and len(lows) >= 3:
             previous_direction, _ = self._analyze_structure(highs[:-1], lows[:-1])
         trend_change = direction in {"BULLISH", "BEARISH"} and previous_direction not in {"SIDEWAYS", direction}
         confirmed = direction in {"BULLISH", "BEARISH"}
+
         return {
             "direction": direction,
             "confidence": 90 if confirmed else 50,
