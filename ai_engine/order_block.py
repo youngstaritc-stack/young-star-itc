@@ -6,73 +6,86 @@ from .candle import CandleData
 
 @dataclass(frozen=True)
 class OBZone:
-    index: int
-    direction: str
     zone_low: float
     zone_high: float
+    direction: str
     state: str
-    high_quality: bool
+    formation_index: int
+    last_processed_index: int
+    distance: float
+    age: int
     fib_confluence: bool = False
     fib_levels: tuple[float, ...] = ()
+    ob_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
 class OrderBlockEngine:
+    """Part 4: Rule Book OB detection/state/priority only."""
+
     STATES = ("VIRGIN", "TOUCHED", "RETESTED", "INVALIDATED")
 
     @staticmethod
-    def _is_high_quality(direction: str, trend_context: dict[str, Any]) -> bool:
-        return direction == trend_context.get("direction")
-
-    @staticmethod
-    def _state(candle: CandleData, candles: list[CandleData], direction: str) -> str:
-        body_low = min(candle.open, candle.close)
-        body_high = max(candle.open, candle.close)
-        touched = 0
-        for future in candles[candles.index(candle) + 1:]:
-            if future.low <= body_high and future.high >= body_low:
-                touched += 1
-        if touched == 0:
-            return "VIRGIN"
-        if touched == 1:
-            return "TOUCHED"
-        return "RETESTED"
-
-    @staticmethod
-    def _invalidated(zone_low: float, zone_high: float, candles: list[CandleData], direction: str) -> bool:
-        for c in candles:
-            if direction == "BULLISH" and c.close < zone_low:
-                return True
-            if direction == "BEARISH" and c.close > zone_high:
-                return True
+    def _is_formation(candles: list[CandleData], i: int, direction: str) -> bool:
+        if i + 1 >= len(candles):
+            return False
+        c = candles[i]
+        nxt = candles[i + 1]
+        if direction == "BULLISH":
+            return c.close < c.open and nxt.close > c.high
+        if direction == "BEARISH":
+            return c.close > c.open and nxt.close < c.low
         return False
 
+    @staticmethod
+    def _state(candles: list[CandleData], start: int, low: float, high: float, direction: str) -> str:
+        touches = 0
+        for c in candles[start + 1:]:
+            if direction == "BULLISH" and c.close < low:
+                return "INVALIDATED"
+            if direction == "BEARISH" and c.close > high:
+                return "INVALIDATED"
+            if c.low <= high and c.high >= low:
+                touches += 1
+                if touches >= 2:
+                    return "RETESTED"
+        return "TOUCHED" if touches == 1 else "VIRGIN"
+
     def detect(self, candles: list[CandleData], current_index: int, trend_context: dict[str, Any], timeframe: str) -> dict[str, Any]:
-        visible = candles[: min(current_index, len(candles) - 1) + 1]
-        direction = trend_context.get("direction", "SIDEWAYS")
+        if not candles or current_index < 0:
+            return {"timeframe": timeframe, "zones": [], "priority": None}
+        end = min(current_index, len(candles) - 1)
+        visible = candles[: end + 1]
+        trend = trend_context.get("direction", "SIDEWAYS")
+        if trend not in {"BULLISH", "BEARISH"}:
+            return {"timeframe": timeframe, "zones": [], "priority": None}
+
         zones: list[OBZone] = []
-        for i, c in enumerate(visible):
-            body_low = min(c.open, c.close)
-            body_high = max(c.open, c.close)
-            if direction == "BULLISH" and c.close < c.open:
-                zone_direction = "BULLISH"
-            elif direction == "BEARISH" and c.close > c.open:
-                zone_direction = "BEARISH"
-            else:
+        last_index = len(visible) - 1
+        for i in range(len(visible) - 1):
+            if not self._is_formation(visible, i, trend):
                 continue
-            state = "VIRGIN"
-            touches = 0
-            for later in visible[i + 1:]:
-                if later.low <= body_high and later.high >= body_low:
-                    touches += 1
-            if touches == 1:
-                state = "TOUCHED"
-            elif touches >= 2:
-                state = "RETESTED"
-            if self._invalidated(body_low, body_high, visible[i + 1:], zone_direction):
-                state = "INVALIDATED"
-            zones.append(OBZone(i, zone_direction, body_low, body_high, state, self._is_high_quality(zone_direction, trend_context)))
-        ranked = sorted(zones, key=lambda z: (z.high_quality, z.state != "INVALIDATED", -z.index), reverse=True)
-        return {"timeframe": timeframe, "zones": [z.to_dict() for z in ranked], "priority": ranked[0].to_dict() if ranked else None}
+            c = visible[i]
+            low = min(c.open, c.close)
+            high = max(c.open, c.close)
+            state = self._state(visible, i, low, high, trend)
+            zones.append(OBZone(
+                zone_low=low,
+                zone_high=high,
+                direction=trend,
+                state=state,
+                formation_index=i,
+                last_processed_index=last_index,
+                distance=0.0,
+                age=last_index - i,
+                ob_id=f"{timeframe}:{trend}:{i}",
+            ))
+
+        zones.sort(key=lambda z: (z.state != "INVALIDATED", z.age * -1), reverse=True)
+        return {
+            "timeframe": timeframe,
+            "zones": [z.to_dict() for z in zones],
+            "priority": zones[0].to_dict() if zones else None,
+        }
