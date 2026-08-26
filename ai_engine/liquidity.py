@@ -25,18 +25,20 @@ class LiquidityEngine:
     """Part 7: swing liquidity, completed sweeps and retests only."""
 
     @staticmethod
-    def _is_sweep_completed(candles: list[CandleData], level: float, kind: str, start: int) -> int | None:
+    def _is_sweep_completed(
+        candles: list[CandleData], level: float, kind: str, start: int
+    ) -> int | None:
         broken = False
         for i in range(max(0, start), len(candles)):
-            c = candles[i]
-            if kind == "HIGH" and c.high > level:
+            candle = candles[i]
+            if kind == "HIGH" and candle.high > level:
                 broken = True
-            elif kind == "LOW" and c.low < level:
+            elif kind == "LOW" and candle.low < level:
                 broken = True
             if broken:
-                if kind == "HIGH" and c.close <= level:
+                if kind == "HIGH" and candle.close <= level:
                     return i
-                if kind == "LOW" and c.close >= level:
+                if kind == "LOW" and candle.close >= level:
                     return i
         return None
 
@@ -45,17 +47,28 @@ class LiquidityEngine:
         return candle.low <= level <= candle.high
 
     @staticmethod
-    def _has_new_swing_outside(item: dict[str, Any], later_swings: list[dict[str, Any]], kind: str) -> bool:
+    def _has_new_swing_outside(
+        item: dict[str, Any], later_swings: list[dict[str, Any]], kind: str
+    ) -> bool:
         for swing in later_swings:
+            if swing["index"] <= item["index"]:
+                continue
             if kind == "HIGH" and swing["price"] > item["price"]:
                 return True
             if kind == "LOW" and swing["price"] < item["price"]:
                 return True
         return False
 
-    def detect(self, candles: list[CandleData], current_index: int, trend_context: dict[str, Any], timeframe: str) -> dict[str, Any]:
+    def detect(
+        self,
+        candles: list[CandleData],
+        current_index: int,
+        trend_context: dict[str, Any],
+        timeframe: str,
+    ) -> dict[str, Any]:
         if not candles or current_index < 0:
             return {"timeframe": timeframe, "levels": [], "priority": None}
+
         end = min(current_index, len(candles) - 1)
         visible = candles[: end + 1]
         highs = trend_context.get("swing_highs", [])[-LIQUIDITY_SWEEP_LOOKBACK:]
@@ -64,30 +77,34 @@ class LiquidityEngine:
         levels: list[LiquidityLevel] = []
 
         for item in highs:
-            price = item["price"]
+            price = float(item["price"])
             sweep_index = self._is_sweep_completed(visible, price, "HIGH", item["index"] + 1)
-            state = "VIRGIN"
-            if sweep_index is not None:
-                state = "SWEPT"
-                if any(self._is_retested(c, price) for c in visible[sweep_index + 1:]):
-                    state = "RETESTED"
+            state = "SWEPT" if sweep_index is not None else "VIRGIN"
+            if sweep_index is not None and any(
+                self._is_retested(candle, price) for candle in visible[sweep_index + 1:]
+            ):
+                state = "RETESTED"
             if self._has_new_swing_outside(item, highs, "HIGH"):
                 state = "INVALIDATED"
             alignment = "ALIGNED" if trend == "BEARISH" else "NOT_ALIGNED"
             levels.append(LiquidityLevel(item["index"], "HIGH", price, state, sweep_index, alignment, {}))
 
         for item in lows:
-            price = item["price"]
+            price = float(item["price"])
             sweep_index = self._is_sweep_completed(visible, price, "LOW", item["index"] + 1)
-            state = "VIRGIN"
-            if sweep_index is not None:
-                state = "SWEPT"
-                if any(self._is_retested(c, price) for c in visible[sweep_index + 1:]):
-                    state = "RETESTED"
+            state = "SWEPT" if sweep_index is not None else "VIRGIN"
+            if sweep_index is not None and any(
+                self._is_retested(candle, price) for candle in visible[sweep_index + 1:]
+            ):
+                state = "RETESTED"
             if self._has_new_swing_outside(item, lows, "LOW"):
                 state = "INVALIDATED"
             alignment = "ALIGNED" if trend == "BULLISH" else "NOT_ALIGNED"
             levels.append(LiquidityLevel(item["index"], "LOW", price, state, sweep_index, alignment, {}))
 
-        levels.sort(key=lambda x: x.index, reverse=True)
-        return {"timeframe": timeframe, "levels": [l.to_dict() for l in levels], "priority": levels[0].to_dict() if levels else None}
+        levels.sort(key=lambda level: level.index, reverse=True)
+        return {
+            "timeframe": timeframe,
+            "levels": [level.to_dict() for level in levels],
+            "priority": levels[0].to_dict() if levels else None,
+        }
