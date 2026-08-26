@@ -1,51 +1,53 @@
-from typing import Any, Dict, List
+from dataclasses import dataclass, asdict
+from typing import Any
 
 from .candle import CandleData
 
 
+@dataclass(frozen=True)
+class FVGZone:
+    index: int
+    direction: str
+    zone_low: float
+    zone_high: float
+    state: str
+    confirmed: bool
+    trend_alignment: str
+    confluence: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 class FVGEngine:
-    """Part 6: informational FVG context only; never an entry signal."""
-
-    def detect(self, candles: List[CandleData], current_index: int, trend_context: Dict[str, Any], timeframe: str) -> List[Dict[str, Any]]:
-        visible = candles[: min(current_index, len(candles) - 1) + 1] if candles and current_index >= 0 else []
-        result: List[Dict[str, Any]] = []
-
-        # i is the third candle of the three-candle formation. A following
-        # candle must also exist before the FVG is considered confirmed.
-        for i in range(2, len(visible) - 1):
-            c1, c2, c3 = visible[i - 2], visible[i - 1], visible[i]
+    def detect(self, candles: list[CandleData], current_index: int, trend_context: dict[str, Any], timeframe: str) -> dict[str, Any]:
+        visible = candles[: min(current_index, len(candles) - 1) + 1]
+        zones: list[FVGZone] = []
+        for i in range(2, len(visible)):
+            c1, _, c3 = visible[i - 2], visible[i - 1], visible[i]
+            direction: str | None = None
+            low = high = 0.0
             if c1.low > c3.high:
-                result.append(self._make(i, "BULLISH", c3.high, c1.low, visible, trend_context.get("direction"), timeframe))
+                direction, low, high = "BULLISH", c3.high, c1.low
             elif c1.high < c3.low:
-                result.append(self._make(i, "BEARISH", c1.high, c3.low, visible, trend_context.get("direction"), timeframe))
-        return result
-
-    @staticmethod
-    def _make(index: int, kind: str, low: float, high: float, candles: List[CandleData], trend: str, timeframe: str) -> Dict[str, Any]:
-        hits = 0
-        state = "VIRGIN"
-        for candle in candles[index + 1:]:
-            if candle.low <= high and candle.high >= low:
-                hits += 1
-                if kind == "BULLISH" and candle.close < low:
-                    state = "INVALIDATED"
-                    break
-                if kind == "BEARISH" and candle.close > high:
-                    state = "INVALIDATED"
-                    break
+                direction, low, high = "BEARISH", c1.high, c3.low
+            if direction is None:
+                continue
+            confirmed = i + 1 < len(visible)
+            state = "VIRGIN"
+            touches = 0
+            for later in visible[i + 1:]:
+                if later.low <= high and later.high >= low:
+                    touches += 1
+            if touches == 1:
                 state = "TOUCHED"
-
-        if state == "TOUCHED" and hits > 1:
-            state = "RETESTED"
-
-        aligned = kind == trend
-        return {
-            "formation_index": index,
-            "confirmation_index": index + 1,
-            "zone": {"low": low, "high": high},
-            "type": kind,
-            "state": state,
-            "trend_alignment": aligned,
-            "confluence": {"trend_alignment": aligned},
-            "timeframe": timeframe,
-        }
+            elif touches >= 2:
+                state = "RETESTED"
+            if direction == "BULLISH" and any(c.close < low for c in visible[i + 1:]):
+                state = "INVALIDATED"
+            if direction == "BEARISH" and any(c.close > high for c in visible[i + 1:]):
+                state = "INVALIDATED"
+            trend = trend_context.get("direction", "SIDEWAYS")
+            alignment = "ALIGNED" if trend == direction else "NOT_ALIGNED"
+            zones.append(FVGZone(i, direction, low, high, state, confirmed, alignment, {}))
+        return {"timeframe": timeframe, "zones": [z.to_dict() for z in zones], "priority": zones[-1].to_dict() if zones else None}

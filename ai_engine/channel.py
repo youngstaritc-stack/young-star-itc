@@ -1,82 +1,91 @@
-from typing import Any, Dict, List
+from dataclasses import dataclass, asdict
+from typing import Any
 
 from .candle import CandleData
-from .trend_engine import TrendEngine
+
+
+@dataclass(frozen=True)
+class Channel:
+    direction: str
+    upper_boundary: dict[str, Any]
+    lower_boundary: dict[str, Any]
+    slope: float
+    state: str
+    upper_touches: int
+    lower_touches: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 class ChannelEngine:
-    """Part 5: Parallel Channel using confirmed swing boundaries."""
-
     PARALLEL_SLOPE_TOLERANCE = 0.05
 
-    def detect(self, candles: List[CandleData], current_index: int, trend_context: Dict[str, Any], timeframe: str) -> Dict[str, Any]:
-        visible = candles[: min(current_index, len(candles) - 1) + 1] if candles and current_index >= 0 else []
-        highs, lows = TrendEngine()._detect_swings(visible)
+    @staticmethod
+    def _slope(p1: dict[str, Any], p2: dict[str, Any]) -> float:
+        dx = p2["index"] - p1["index"]
+        return 0.0 if dx == 0 else (p2["price"] - p1["price"]) / dx
+
+    @staticmethod
+    def _touches(candles: list[CandleData], boundary: dict[str, Any], slope: float, is_upper: bool) -> int:
+        count = 0
+        for i, c in enumerate(candles):
+            expected = boundary["price"] + slope * (i - boundary["index"])
+            if is_upper and abs(c.high - expected) <= max(1e-9, abs(expected) * 0.001):
+                count += 1
+            if not is_upper and abs(c.low - expected) <= max(1e-9, abs(expected) * 0.001):
+                count += 1
+        return count
+
+    def detect(self, candles: list[CandleData], current_index: int, trend_context: dict[str, Any], timeframe: str) -> dict[str, Any]:
+        visible = candles[: min(current_index, len(candles) - 1) + 1]
+        highs = trend_context.get("swing_highs", [])
+        lows = trend_context.get("swing_lows", [])
         direction = trend_context.get("direction", "SIDEWAYS")
-        if len(highs) < 2 or len(lows) < 2:
-            return self._empty(timeframe, direction)
-
-        h1, h2 = highs[-2], highs[-1]
-        l1, l2 = lows[-2], lows[-1]
-        hs = (h2["price"] - h1["price"]) / (h2["index"] - h1["index"])
-        ls = (l2["price"] - l1["price"]) / (l2["index"] - l1["index"])
-        if direction == "SIDEWAYS":
-            hs = ls = 0.0
-        elif abs(hs - ls) > self.PARALLEL_SLOPE_TOLERANCE:
-            return self._empty(timeframe, direction)
-
-        upper = (h1["index"], h1["price"], hs)
-        lower = (l1["index"], l1["price"], ls)
-        state = self._state(visible, upper, lower)
-        if self._body_break(visible, upper, lower):
-            state = "INVALIDATED"
-
-        return {
-            "timeframe": timeframe,
-            "direction": direction,
-            "upper_boundary": upper,
-            "lower_boundary": lower,
-            "slope": hs,
-            "upper_touches": 2,
-            "lower_touches": 2,
-            "state": state,
-        }
-
-    @staticmethod
-    def _state(candles: List[CandleData], upper, lower) -> str:
-        hits = 0
-        u_i, u_p, u_s = upper
-        l_i, l_p, l_s = lower
-        for i in range(max(u_i, l_i), len(candles)):
-            up = u_p + u_s * (i - u_i)
-            lp = l_p + l_s * (i - l_i)
-            if candles[i].low <= up <= candles[i].high or candles[i].low <= lp <= candles[i].high:
-                hits += 1
-        return "RETESTED" if hits > 1 else ("TOUCHED" if hits else "VIRGIN")
-
-    @staticmethod
-    def _body_break(candles: List[CandleData], upper, lower) -> bool:
-        u_i, u_p, u_s = upper
-        l_i, l_p, l_s = lower
-        for i in range(max(u_i, l_i), len(candles)):
-            c = candles[i]
-            up = u_p + u_s * (i - u_i)
-            lp = l_p + l_s * (i - l_i)
-            body_high = max(c.open, c.close)
-            body_low = min(c.open, c.close)
-            if body_high > up or body_low < lp:
-                return True
-        return False
-
-    @staticmethod
-    def _empty(timeframe, direction):
-        return {
-            "timeframe": timeframe,
-            "direction": direction,
-            "upper_boundary": None,
-            "lower_boundary": None,
-            "slope": 0.0,
-            "upper_touches": 0,
-            "lower_touches": 0,
-            "state": "INVALIDATED" if direction != "SIDEWAYS" else "VIRGIN",
-        }
+        if direction == "BULLISH" and len(highs) >= 2 and len(lows) >= 2:
+            upper = highs[-2]
+            upper2 = highs[-1]
+            lower = lows[-2]
+            lower2 = lows[-1]
+            slope_u = self._slope(upper, upper2)
+            slope_l = self._slope(lower, lower2)
+            slope = (slope_u + slope_l) / 2
+            valid = abs(slope_u - slope_l) <= self.PARALLEL_SLOPE_TOLERANCE
+            upper_touches = self._touches(visible, upper, slope_u, True)
+            lower_touches = self._touches(visible, lower, slope_l, False)
+            channel = Channel("BULLISH", upper, lower, slope, "VIRGIN", upper_touches, lower_touches)
+            if valid and upper_touches >= 2 and lower_touches >= 2:
+                for c in visible:
+                    i = visible.index(c)
+                    up = upper["price"] + slope * (i - upper["index"])
+                    lo = lower["price"] + slope * (i - lower["index"])
+                    if c.close > up or c.close < lo:
+                        channel = Channel(channel.direction, channel.upper_boundary, channel.lower_boundary, channel.slope, "INVALIDATED", channel.upper_touches, channel.lower_touches)
+                        break
+            return {"timeframe": timeframe, **channel.to_dict()}
+        if direction == "BEARISH" and len(highs) >= 2 and len(lows) >= 2:
+            upper = highs[-2]
+            upper2 = highs[-1]
+            lower = lows[-2]
+            lower2 = lows[-1]
+            slope_u = self._slope(upper, upper2)
+            slope_l = self._slope(lower, lower2)
+            slope = (slope_u + slope_l) / 2
+            valid = abs(slope_u - slope_l) <= self.PARALLEL_SLOPE_TOLERANCE
+            upper_touches = self._touches(visible, upper, slope_u, True)
+            lower_touches = self._touches(visible, lower, slope_l, False)
+            state = "VIRGIN"
+            if valid and upper_touches >= 2 and lower_touches >= 2:
+                for i, c in enumerate(visible):
+                    up = upper["price"] + slope * (i - upper["index"])
+                    lo = lower["price"] + slope * (i - lower["index"])
+                    if c.close > up or c.close < lo:
+                        state = "INVALIDATED"
+                        break
+            return {"timeframe": timeframe, **Channel("BEARISH", upper, lower, slope, state, upper_touches, lower_touches).to_dict()}
+        if visible:
+            high = max(c.high for c in visible)
+            low = min(c.low for c in visible)
+        else:
+            high = low = 0.0
+        return {"timeframe": timeframe, "direction": "SIDEWAYS", "upper_boundary": {"index": len(visible) - 1, "price": high}, "lower_boundary": {"index": len(visible) - 1, "price": low}, "slope": 0.0, "state": "VIRGIN", "upper_touches": 0, "lower_touches": 0}
