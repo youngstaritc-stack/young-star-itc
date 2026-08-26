@@ -36,23 +36,26 @@ class FibonacciEngine:
         highs, lows = cls._detect_swings(candles)
         if not highs or not lows:
             return None, None
-        high = highs[-1]
-        low = lows[-1]
-        return high, low
+        return highs[-1], lows[-1]
 
     @staticmethod
-    def _level_status(level: float, candles: list[CandleData], start_index: int, ratio: float) -> str:
+    def _level_status(
+        level: float,
+        candles: list[CandleData],
+        swing_high: dict[str, Any],
+        swing_low: dict[str, Any],
+        direction: str,
+    ) -> str:
+        swing_end = max(swing_high["index"], swing_low["index"])
         touches = 0
-        for i in range(start_index + 1, len(candles)):
-            c = candles[i]
+        for c in candles[swing_end + 1:]:
             if c.low <= level <= c.high:
                 touches += 1
-            # A retracement is invalidated when price closes beyond the swing
-            # side represented by the level. No extra threshold is introduced.
-            if ratio < 0.5 and c.close > level:
-                return "INVALIDATED" if touches == 0 else "RETESTED"
-            if ratio >= 0.5 and c.close < level:
-                return "INVALIDATED" if touches == 0 else "RETESTED"
+            # Invalidate only when price closes through the swing endpoint.
+            if direction == "BULLISH" and c.close < swing_low["price"]:
+                return "INVALIDATED"
+            if direction == "BEARISH" and c.close > swing_high["price"]:
+                return "INVALIDATED"
         if touches >= 2:
             return "RETESTED"
         if touches == 1:
@@ -60,65 +63,85 @@ class FibonacciEngine:
         return "VIRGIN"
 
     def analyze(self, candles: list[CandleData], timeframe: str) -> dict[str, Any]:
+        empty = {
+            "timeframe": timeframe,
+            "levels": {},
+            "virgin_levels": [],
+            "priority_level": None,
+            "swing_high": None,
+            "swing_low": None,
+        }
         if len(candles) < 5:
-            return {"timeframe": timeframe, "levels": {}, "virgin_levels": [], "priority_level": None, "swing_high": None, "swing_low": None}
+            return empty
 
         swing_high, swing_low = self._detect_main_swing(candles)
         if swing_high is None or swing_low is None:
-            return {"timeframe": timeframe, "levels": {}, "virgin_levels": [], "priority_level": None, "swing_high": None, "swing_low": None}
+            return empty
 
-        high = swing_high["price"]
-        low = swing_low["price"]
+        high = float(swing_high["price"])
+        low = float(swing_low["price"])
         span = high - low
         if span <= 0:
-            return {"timeframe": timeframe, "levels": {}, "virgin_levels": [], "priority_level": None, "swing_high": swing_high, "swing_low": swing_low}
+            return {**empty, "swing_high": swing_high, "swing_low": swing_low}
 
+        direction = "BULLISH" if swing_low["index"] < swing_high["index"] else "BEARISH"
         levels: dict[str, dict[str, Any]] = {}
-        swing_end = max(swing_high["index"], swing_low["index"])
         for ratio in self.RETRACEMENT_RATIOS:
-            price = high - span * ratio
-            status = self._level_status(price, candles, swing_end, ratio)
+            price = high - span * ratio if direction == "BULLISH" else low + span * ratio
+            status = self._level_status(price, candles, swing_high, swing_low, direction)
             levels[str(ratio)] = {"ratio": ratio, "price": price, "status": status}
 
         virgin_levels = [levels[str(r)] for r in self.PRIORITY if levels[str(r)]["status"] == "VIRGIN"]
-        priority = virgin_levels[0] if virgin_levels else None
         return {
             "timeframe": timeframe,
+            "direction": direction,
             "levels": levels,
             "virgin_levels": virgin_levels,
-            "priority_level": priority,
+            "priority_level": virgin_levels[0] if virgin_levels else None,
             "swing_high": swing_high,
             "swing_low": swing_low,
         }
 
-    def analyze_extension(self, candles: list[CandleData], timeframe: str, retracement_data: dict[str, Any]) -> dict[str, Any]:
-        """Part 3: calculate FEX-001..004 from the selected retracement point C."""
+    def analyze_extension(
+        self,
+        candles: list[CandleData],
+        timeframe: str,
+        retracement_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Part 3: FEX-001..004 from the selected retracement point C."""
         priority = retracement_data.get("priority_level")
         swing_high = retracement_data.get("swing_high")
         swing_low = retracement_data.get("swing_low")
+        empty = {
+            "timeframe": timeframe,
+            "point_c": None,
+            "extension_1_618": None,
+            "extension_2_618": None,
+            "extension_3_618": None,
+            "extension_4_618": None,
+            "tp_always": None,
+            "final_target": None,
+        }
         if not priority or not swing_high or not swing_low:
-            return {"timeframe": timeframe, "point_c": None, "extension_1_618": None, "extension_2_618": None, "extension_3_618": None, "extension_4_618": None, "tp_always": None, "final_target": None}
+            return empty
 
-        a = swing_low["price"]
-        b = swing_high["price"]
-        c = priority["price"]
+        a = float(swing_low["price"])
+        b = float(swing_high["price"])
+        c = float(priority["price"])
         leg = abs(b - a)
         bullish = swing_low["index"] < swing_high["index"]
 
         def extension(ratio: float) -> float:
             return c + leg * ratio if bullish else c - leg * ratio
 
-        e1618 = extension(1.618)
-        e2618 = extension(2.618)
-        e3618 = extension(3.618)
-        e4618 = extension(4.618)
+        values = {ratio: extension(ratio) for ratio in self.EXTENSION_RATIOS}
         return {
             "timeframe": timeframe,
             "point_c": c,
-            "extension_1_618": e1618,
-            "extension_2_618": e2618,
-            "extension_3_618": e3618,
-            "extension_4_618": e4618,
-            "tp_always": e3618,
-            "final_target": e4618,
+            "extension_1_618": values[1.618],
+            "extension_2_618": values[2.618],
+            "extension_3_618": values[3.618],
+            "extension_4_618": values[4.618],
+            "tp_always": values[3.618],
+            "final_target": values[4.618],
         }
