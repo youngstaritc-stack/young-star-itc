@@ -45,9 +45,20 @@ class ChannelEngine:
         body_low = min(c.open, c.close)
         return body_low > upper or body_high < lower
 
-    def detect(self, candles: list[CandleData], current_index: int, trend_context: dict[str, Any], timeframe: str) -> dict[str, Any]:
+    def detect(
+        self,
+        candles: list[CandleData],
+        current_index: int,
+        trend_context: dict[str, Any],
+        timeframe: str,
+    ) -> dict[str, Any]:
         if not candles or current_index < 0:
-            return {"timeframe": timeframe, "direction": "SIDEWAYS", "upper_boundary": None, "lower_boundary": None, "slope": 0.0, "state": "VIRGIN", "upper_touches": 0, "lower_touches": 0}
+            return {
+                "timeframe": timeframe, "direction": "SIDEWAYS",
+                "upper_boundary": None, "lower_boundary": None, "slope": 0.0,
+                "state": "VIRGIN", "upper_touches": 0, "lower_touches": 0,
+            }
+
         end = min(current_index, len(candles) - 1)
         visible = candles[: end + 1]
         direction = trend_context.get("direction", "SIDEWAYS")
@@ -57,7 +68,16 @@ class ChannelEngine:
         if direction not in {"BULLISH", "BEARISH"} or len(highs) < 2 or len(lows) < 2:
             high = max(c.high for c in visible)
             low = min(c.low for c in visible)
-            return {"timeframe": timeframe, "direction": "SIDEWAYS", "upper_boundary": {"index": end, "price": high}, "lower_boundary": {"index": end, "price": low}, "slope": 0.0, "state": "VIRGIN", "upper_touches": 0, "lower_touches": 0}
+            return {
+                "timeframe": timeframe,
+                "direction": "SIDEWAYS",
+                "upper_boundary": {"index": end, "price": high},
+                "lower_boundary": {"index": end, "price": low},
+                "slope": 0.0,
+                "state": "VIRGIN",
+                "upper_touches": 0,
+                "lower_touches": 0,
+            }
 
         upper_a, upper_b = highs[-2], highs[-1]
         lower_a, lower_b = lows[-2], lows[-1]
@@ -71,17 +91,18 @@ class ChannelEngine:
 
         if valid_parallel and upper_touches >= 2 and lower_touches >= 2:
             touches = 0
-            for i, c in enumerate(visible):
+            for i, candle in enumerate(visible):
                 upper = upper_a["price"] + slope * (i - upper_a["index"])
                 lower = lower_a["price"] + slope * (i - lower_a["index"])
-                if self._body_break(c, upper, lower):
+                if self._body_break(candle, upper, lower):
                     state = "INVALIDATED"
                     break
-                if c.low <= upper <= c.high or c.low <= lower <= c.high:
+                if candle.low <= upper <= candle.high or candle.low <= lower <= candle.high:
                     touches += 1
             if state != "INVALIDATED":
                 state = "RETESTED" if touches >= 2 else ("TOUCHED" if touches == 1 else "VIRGIN")
-        elif valid_parallel:
-            state = "VIRGIN"
 
-        return {"timeframe": timeframe, **Channel(direction, upper_a, lower_a, slope, state, upper_touches, lower_touches).to_dict()}
+        return {
+            "timeframe": timeframe,
+            **Channel(direction, upper_a, lower_a, slope, state, upper_touches, lower_touches).to_dict(),
+        }
