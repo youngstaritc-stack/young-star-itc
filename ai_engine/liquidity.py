@@ -4,6 +4,9 @@ from typing import Any
 from .candle import CandleData
 
 
+LIQUIDITY_SWEEP_LOOKBACK = 10  # implementation default; not a Rule Book threshold
+
+
 @dataclass(frozen=True)
 class LiquidityLevel:
     index: int
@@ -19,9 +22,12 @@ class LiquidityLevel:
 
 
 class LiquidityEngine:
-    def _is_sweep_completed(self, candles: list[CandleData], level: float, kind: str, start: int) -> int | None:
+    """Part 7: swing liquidity, completed sweeps and retests only."""
+
+    @staticmethod
+    def _is_sweep_completed(candles: list[CandleData], level: float, kind: str, start: int) -> int | None:
         broken = False
-        for i in range(start, len(candles)):
+        for i in range(max(0, start), len(candles)):
             c = candles[i]
             if kind == "HIGH" and c.high > level:
                 broken = True
@@ -38,21 +44,50 @@ class LiquidityEngine:
     def _is_retested(candle: CandleData, level: float) -> bool:
         return candle.low <= level <= candle.high
 
+    @staticmethod
+    def _has_new_swing_outside(item: dict[str, Any], later_swings: list[dict[str, Any]], kind: str) -> bool:
+        for swing in later_swings:
+            if kind == "HIGH" and swing["price"] > item["price"]:
+                return True
+            if kind == "LOW" and swing["price"] < item["price"]:
+                return True
+        return False
+
     def detect(self, candles: list[CandleData], current_index: int, trend_context: dict[str, Any], timeframe: str) -> dict[str, Any]:
-        visible = candles[: min(current_index, len(candles) - 1) + 1]
-        highs = trend_context.get("swing_highs", [])
-        lows = trend_context.get("swing_lows", [])
+        if not candles or current_index < 0:
+            return {"timeframe": timeframe, "levels": [], "priority": None}
+        end = min(current_index, len(candles) - 1)
+        visible = candles[: end + 1]
+        highs = trend_context.get("swing_highs", [])[-LIQUIDITY_SWEEP_LOOKBACK:]
+        lows = trend_context.get("swing_lows", [])[-LIQUIDITY_SWEEP_LOOKBACK:]
         trend = trend_context.get("direction", "SIDEWAYS")
         levels: list[LiquidityLevel] = []
-        for item in highs + lows:
-            kind = "HIGH" if item in highs else "LOW"
+
+        for item in highs:
             price = item["price"]
-            sweep_index = self._is_sweep_completed(visible, price, kind, item["index"] + 1)
+            sweep_index = self._is_sweep_completed(visible, price, "HIGH", item["index"] + 1)
             state = "VIRGIN"
             if sweep_index is not None:
                 state = "SWEPT"
                 if any(self._is_retested(c, price) for c in visible[sweep_index + 1:]):
                     state = "RETESTED"
-            alignment = "ALIGNED" if ((kind == "LOW" and trend == "BULLISH") or (kind == "HIGH" and trend == "BEARISH")) else "NOT_ALIGNED"
-            levels.append(LiquidityLevel(item["index"], kind, price, state, sweep_index, alignment, {}))
-        return {"timeframe": timeframe, "levels": [l.to_dict() for l in levels], "priority": levels[-1].to_dict() if levels else None}
+            if self._has_new_swing_outside(item, highs, "HIGH"):
+                state = "INVALIDATED"
+            alignment = "ALIGNED" if trend == "BEARISH" else "NOT_ALIGNED"
+            levels.append(LiquidityLevel(item["index"], "HIGH", price, state, sweep_index, alignment, {}))
+
+        for item in lows:
+            price = item["price"]
+            sweep_index = self._is_sweep_completed(visible, price, "LOW", item["index"] + 1)
+            state = "VIRGIN"
+            if sweep_index is not None:
+                state = "SWEPT"
+                if any(self._is_retested(c, price) for c in visible[sweep_index + 1:]):
+                    state = "RETESTED"
+            if self._has_new_swing_outside(item, lows, "LOW"):
+                state = "INVALIDATED"
+            alignment = "ALIGNED" if trend == "BULLISH" else "NOT_ALIGNED"
+            levels.append(LiquidityLevel(item["index"], "LOW", price, state, sweep_index, alignment, {}))
+
+        levels.sort(key=lambda x: x.index, reverse=True)
+        return {"timeframe": timeframe, "levels": [l.to_dict() for l in levels], "priority": levels[0].to_dict() if levels else None}
